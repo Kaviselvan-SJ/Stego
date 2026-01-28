@@ -29,7 +29,7 @@ export default function App() {
   const handleFileUpload = (e, setter) => {
     if (e.target.files && e.target.files[0]) {
       setter(e.target.files[0]);
-      setResult(null); // Reset result on new upload
+      setResult(null); 
       setError(null);
     }
   };
@@ -58,27 +58,23 @@ export default function App() {
     }
 
     try {
-      // Simulation for UI testing (Uncomment for demo)
-      await new Promise(r => setTimeout(r, 1500));
-      const fakeRes = { data: { stego_image: URL.createObjectURL(coverImg), recovered_image: URL.createObjectURL(coverImg), metrics: { psnr: 45.2, ssim: 0.98, bpp: 1.2, accuracy: 99.9 }, message: "This is a simulated decoded secret message." } };
-      setResult(fakeRes.data);
-      
-      // Real Backend Call (Uncomment for production)
-      // const res = await axios.post(`${API_BASE_URL}${endpoint}`, formData);
-      // setResult(res.data);
+      // Real Backend Call
+      const res = await axios.post(`${API_BASE_URL}${endpoint}`, formData);
+      setResult(res.data);
     } catch (err) {
       console.error(err);
-      setError("Error connecting to backend. Is the server running?");
+      if (err.response && err.response.data.error) {
+        setError(err.response.data.error);
+      } else {
+        setError("Error connecting to backend. Is the server running?");
+      }
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    // Outer container ensures full width and height with background color
     <div className="min-h-screen w-full bg-slate-50 text-slate-900 font-sans">
-      
-      {/* Header - Stretches full width */}
       <header className="w-full bg-white border-b border-slate-200 py-6 mb-8 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 md:px-8 text-center md:text-left flex flex-col md:flex-row items-center justify-between gap-4">
           <div>
@@ -87,20 +83,18 @@ export default function App() {
             </h1>
             <p className="text-slate-500 font-medium text-sm mt-1 ml-1">Secure Steganography powered by DenseGAN & AES-256</p>
           </div>
-          
           <div className="flex gap-2">
              <span className="px-3 py-1 bg-indigo-50 text-indigo-700 rounded-full text-xs font-bold border border-indigo-100">v2.0 Beta</span>
           </div>
         </div>
       </header>
 
-      {/* Main Content Area - constrained to max-w-7xl for standard widescreen look */}
       <main className="w-full max-w-7xl mx-auto px-4 md:px-8 pb-12 grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
         
-        {/* Left Panel: Controls (Takes 4 cols) */}
+        {/* Controls Panel */}
         <div className="lg:col-span-4 space-y-6 lg:sticky lg:top-8">
           
-          {/* 1. Mode Switcher */}
+          {/* Mode Switcher */}
           <div className="bg-white p-1.5 rounded-xl shadow-sm border border-slate-200 flex">
             <button 
               onClick={() => {setMode('text'); setResult(null);}}
@@ -116,7 +110,7 @@ export default function App() {
             </button>
           </div>
 
-          {/* 2. Encoder/Decoder Toggle */}
+          {/* Encoder/Decoder Toggle */}
           <div className="relative bg-slate-200 rounded-full p-1 flex items-center cursor-pointer select-none h-12 shadow-inner">
             <div 
               className={`absolute top-1 bottom-1 w-[calc(50%-4px)] bg-white rounded-full shadow-sm transition-transform duration-300 ease-out ${view === 'decode' ? 'translate-x-full ml-1' : 'translate-x-0'}`}
@@ -125,16 +119,14 @@ export default function App() {
             <button onClick={() => setView('decode')} className={`z-10 flex-1 text-sm font-bold text-center transition-colors ${view === 'decode' ? 'text-indigo-900' : 'text-slate-500'}`}>DECODER</button>
           </div>
 
-          {/* 3. Input Form Card */}
+          {/* Input Form */}
           <div className="bg-white p-6 rounded-2xl shadow-xl border border-slate-100 space-y-5">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
-              <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                <Zap className="text-amber-500 fill-current" size={20}/> 
-                {view === 'encode' ? 'Configuration' : 'Extraction'}
-              </h2>
-            </div>
+            <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2 border-b border-slate-100 pb-4">
+              <Zap className="text-amber-500 fill-current" size={20}/> 
+              {view === 'encode' ? 'Configuration' : 'Extraction'}
+            </h2>
 
-            {/* Cover Image Upload */}
+            {/* Cover Image */}
             <div className="space-y-2">
               <label className="block text-xs font-bold uppercase text-slate-500 tracking-wider">Cover Image</label>
               <div className={`relative border-2 border-dashed rounded-xl h-32 flex items-center justify-center text-center transition-all duration-200 group ${coverImg ? 'border-indigo-500 bg-indigo-50/30' : 'border-slate-300 hover:border-indigo-400 hover:bg-slate-50'}`}>
@@ -143,7 +135,7 @@ export default function App() {
                   {coverImg ? (
                     <>
                       <CheckCircle className="text-green-500" size={28} />
-                      <span className="text-xs font-medium text-slate-900 truncate max-w-[200px] px-2">{coverImg.name}</span>
+                      <span className="text-xs font-medium text-slate-900 truncate max-w-50 px-2">{coverImg.name}</span>
                     </>
                   ) : (
                     <>
@@ -155,7 +147,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* Secret Data Input */}
+            {/* Secret Inputs */}
             {view === 'encode' && (
               <div className="animate-in fade-in slide-in-from-top-2 duration-300">
                 {mode === 'text' ? (
@@ -164,7 +156,7 @@ export default function App() {
                     <textarea 
                       value={message} 
                       onChange={(e) => setMessage(e.target.value)}
-                      className="w-full border border-slate-300 rounded-xl p-3 h-24 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none resize-none"
+                      className="w-full border border-slate-300 rounded-xl p-3 h-24 text-sm focus:ring-2 focus:ring-indigo-500 outline-none resize-none"
                       placeholder="Enter hidden text..."
                     />
                   </div>
@@ -186,9 +178,7 @@ export default function App() {
             <div className="space-y-2">
               <div className="flex justify-between items-center">
                 <label className="block text-xs font-bold uppercase text-slate-500 tracking-wider">Security Key</label>
-                <button onClick={generateKey} type="button" className="text-xs text-indigo-600 font-bold hover:text-indigo-800 uppercase">
-                  Auto-Gen
-                </button>
+                <button onClick={generateKey} type="button" className="text-xs text-indigo-600 font-bold hover:text-indigo-800 uppercase">Auto-Gen</button>
               </div>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -198,13 +188,12 @@ export default function App() {
                   type="text" 
                   value={key} 
                   onChange={(e) => setKey(e.target.value)}
-                  className="w-full border border-slate-300 rounded-xl pl-9 pr-4 py-2.5 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none font-mono text-sm" 
+                  className="w-full border border-slate-300 rounded-xl pl-9 pr-4 py-2.5 focus:ring-2 focus:ring-indigo-500 outline-none font-mono text-sm" 
                   placeholder="AES-256 Key"
                 />
               </div>
             </div>
 
-            {/* Action Button */}
             <button 
               onClick={handleSubmit}
               disabled={loading}
@@ -224,20 +213,18 @@ export default function App() {
           </div>
         </div>
 
-        {/* Right Panel: Results (Takes 8 cols - Wider) */}
-        <div className="lg:col-span-8 w-full flex flex-col h-full min-h-[500px]">
+        {/* Results Panel */}
+        <div className="lg:col-span-8 w-full flex flex-col h-full min-h-125">
           {!result ? (
-            <div className="flex-1 border-2 border-dashed border-slate-300 rounded-3xl flex flex-col items-center justify-center text-slate-400 bg-white/40 min-h-[600px]">
+            <div className="flex-1 border-2 border-dashed border-slate-300 rounded-3xl flex flex-col items-center justify-center text-slate-400 bg-white/40 min-h-150">
               <div className="bg-white p-6 rounded-full mb-4 shadow-sm">
                 <BarChart3 size={64} strokeWidth={1} className="text-slate-300" />
               </div>
               <p className="text-xl font-medium text-slate-500">Awaiting Input</p>
-              <p className="text-sm mt-2">Processed images and metrics will appear here.</p>
             </div>
           ) : (
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-8 duration-500">
               
-              {/* Output Image Card */}
               <div className="bg-white p-6 rounded-3xl shadow-lg border border-slate-100">
                 <div className="flex justify-between items-center mb-6">
                     <div className="flex items-center gap-3">
@@ -246,25 +233,26 @@ export default function App() {
                             {view === 'encode' ? 'Steganographic Output' : 'Recovered Content'}
                         </h3>
                     </div>
-                    <a 
-                      href={result.stego_image || result.recovered_image} 
-                      download={`deepstego_result.png`}
-                      className="flex items-center gap-2 bg-slate-900 text-white px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-slate-800 transition shadow-lg shadow-slate-200"
-                    >
-                      <Download size={18} /> Download
-                    </a>
+                    {(result.stego_image || result.recovered_image) && (
+                      <a 
+                        href={result.stego_image || result.recovered_image} 
+                        download={`deepstego_result.png`}
+                        className="flex items-center gap-2 bg-slate-900 text-white px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-slate-800 transition shadow-lg shadow-slate-200"
+                      >
+                        <Download size={18} /> Download
+                      </a>
+                    )}
                 </div>
                 
-                <div className="bg-slate-50 rounded-2xl overflow-hidden border border-slate-200 flex items-center justify-center min-h-[400px]">
+                <div className="bg-slate-50 rounded-2xl overflow-hidden border border-slate-200 flex items-center justify-center min-h-100">
                     <img 
                         src={result.stego_image || result.recovered_image} 
                         alt="Result" 
-                        className="max-h-[600px] w-full object-contain" 
+                        className="max-h-150 w-full object-contain" 
                     />
                 </div>
               </div>
 
-              {/* Metrics Grid */}
               {result.metrics && (
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <MetricCard label="PSNR" value={result.metrics.psnr} unit="dB" desc="Signal/Noise" color="text-blue-600" />
@@ -274,7 +262,7 @@ export default function App() {
                 </div>
               )}
 
-              {/* Decoded Text Result */}
+              {/* Decoded Text Display */}
               {view === 'decode' && mode === 'text' && result.message && (
                 <div className="bg-emerald-50 border border-emerald-100 p-8 rounded-3xl shadow-sm">
                   <h4 className="text-emerald-800 font-bold flex items-center gap-2 mb-4 text-lg">
@@ -294,6 +282,7 @@ export default function App() {
 }
 
 function MetricCard({ label, value, unit, desc, color }) {
+  if (value === undefined) return null;
   return (
     <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 flex flex-col items-center justify-center hover:shadow-md transition-shadow">
       <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">{label}</p>
