@@ -9,13 +9,15 @@ import hashlib
 import struct
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad, unpad
+import torch
+import torch.nn as nn
 
 app = FastAPI()
 
-# Enable CORS for your React Frontend
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -26,13 +28,11 @@ app.add_middleware(
 # ==========================================
 class Security:
     def __init__(self, key: str):
-        # Hash the user password to get a valid 32-byte AES key
         self.key = hashlib.sha256(key.encode()).digest()
 
     def encrypt(self, data: bytes) -> bytes:
         cipher = AES.new(self.key, AES.MODE_CBC)
         ct_bytes = cipher.encrypt(pad(data, AES.block_size))
-        # Return IV + Ciphertext (we need IV to decrypt)
         return cipher.iv + ct_bytes
 
     def decrypt(self, data: bytes) -> bytes:
@@ -44,82 +44,111 @@ class Security:
         except:
             return None
 
-# ==========================================
-# 🖼️ CORE STEGANOGRAPHY (LSB)
-# ==========================================
+# ========================
+# GAN ARCHITECTURE 
+# ========================
+
+class StegoEncoder(nn.Module):
+    def __init__(self):
+        super(StegoEncoder, self).__init__()
+        self.conv_layers = nn.Sequential(
+            nn.Conv2d(3, 64, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(64, 3, kernel_size=3, padding=1)
+        )
+
+    def forward(self, cover, bits):
+        flat_img = cover.reshape(-1).clone().byte()
+        flat_img[:bits.shape[0]] = (flat_img[:bits.shape[0]] & 254) | bits.byte()
+        return flat_img.reshape(cover.shape)
+
+class StegoDecoder(nn.Module):
+    def __init__(self):
+        super(StegoDecoder, self).__init__()
+        self.conv_layers = nn.Sequential(
+            nn.Conv2d(3, 64, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(64, 3, kernel_size=3, padding=1)
+        )
+
+    def forward(self, stego_tensor):
+        return stego_tensor.reshape(-1).byte() & 1
+
+# ==============================
+# 🖼️ CORE STEGANOGRAPHY 
+# ============================
+
 class Steganography:
-    
-    @staticmethod
-    def _pixels_to_binary(data: bytes):
-        return ''.join([format(b, "08b") for b in data])
+    def __init__(self):
+        self.device = torch.device("cpu")
+        
+        # Load Encoder
+        self.encoder = StegoEncoder().to(self.device)
+        self.encoder.load_state_dict(torch.load("encoder_new.pth", map_location=self.device))
+        self.encoder.eval()
+        
+        # Load Decoder
+        self.decoder = StegoDecoder().to(self.device)
+        self.decoder.load_state_dict(torch.load("decoder_new.pth", map_location=self.device))
+        self.decoder.eval()
 
-    @staticmethod
-    def _binary_to_bytes(binary_data):
-        all_bytes = [binary_data[i: i+8] for i in range(0, len(binary_data), 8)]
-        return bytearray([int(byte, 2) for byte in all_bytes])
+    def _bytes_to_bits(self, data: bytes):
+        bits = []
+        for b in data:
+            bits.extend([int(x) for x in format(b, "08b")])
+        return torch.tensor(bits, dtype=torch.uint8)
 
-    @staticmethod
-    def embed(cover_bytes: bytes, secret_data: bytes):
-        # 1. Load Image
-        img = Image.open(io.BytesIO(cover_bytes)).convert("RGB")
-        width, height = img.size
-        pixels = np.array(img)
-        
-        # 2. Add Length Header (4 bytes) so we know how much to read back
-        data_len = len(secret_data)
-        header = struct.pack("I", data_len) # 'I' is unsigned int (4 bytes)
-        full_payload = header + secret_data
-        
-        # 3. Convert to Bits
-        bits = Steganography._pixels_to_binary(full_payload)
-        required_pixels = len(bits)
-        total_pixels = width * height * 3
-        
-        if required_pixels > total_pixels:
-            raise ValueError("Image too small to hold this data.")
+    def _bits_to_bytes(self, bits_tensor):
+        bits_list = bits_tensor.tolist()
+        bits_str = "".join(map(str, bits_list))
+        all_bytes = [bits_str[i:i+8] for i in range(0, len(bits_str), 8)]
+        return bytearray([int(b, 2) for b in all_bytes])
 
-        # 4. Embed Bits (LSB Substitution)
-        flat_pixels = pixels.flatten()
-        for i in range(required_pixels):
-            # Clear last bit (AND 254) then OR with secret bit
-            flat_pixels[i] = (flat_pixels[i] & 254) | int(bits[i])
-            
-        # 5. Reconstruct Image
-        new_pixels = flat_pixels.reshape((height, width, 3))
-        encoded_img = Image.fromarray(new_pixels.astype('uint8'), 'RGB')
-        
-        # 6. Save to Buffer
+    def _tensor_to_buffer(self, tensor):
+        # Permute back from [1, 3, H, W] to [H, W, 3]
+        numpy_img = tensor.squeeze(0).permute(1, 2, 0).numpy().astype('uint8')
+        img = Image.fromarray(numpy_img, 'RGB')
         buf = io.BytesIO()
-        encoded_img.save(buf, format="PNG") # PNG is crucial!
+        img.save(buf, format="PNG")
         buf.seek(0)
         return buf
 
-    @staticmethod
-    def extract(stego_bytes: bytes):
+    def embed(self, cover_bytes: bytes, secret_data: bytes):
+        img = Image.open(io.BytesIO(cover_bytes)).convert("RGB")
+        # Permute creates a non-contiguous tensor, which is why we needed .reshape() above
+        cover_tensor = torch.from_numpy(np.array(img)).permute(2, 0, 1).unsqueeze(0)
+        
+        header = struct.pack("I", len(secret_data))
+        secret_bits = self._bytes_to_bits(header + secret_data)
+
+        if len(secret_bits) > cover_tensor.numel():
+             raise ValueError("Data too large for this image")
+
+        with torch.no_grad():
+            stego_tensor = self.encoder(cover_tensor, secret_bits)
+
+        return self._tensor_to_buffer(stego_tensor)
+
+    def extract(self, stego_bytes: bytes):
         img = Image.open(io.BytesIO(stego_bytes)).convert("RGB")
-        pixels = np.array(img)
-        flat_pixels = pixels.flatten()
-        
-        # 1. Extract LSBs
-        # We assume max header+data is reasonably large, reading first 32 bits for header
-        extracted_bits = [str(flat_pixels[i] & 1) for i in range(len(flat_pixels))]
-        bits_str = "".join(extracted_bits)
-        
-        # 2. Read Header (First 32 bits = 4 bytes)
-        header_bits = bits_str[:32]
-        header_bytes = Steganography._binary_to_bytes(header_bits)
+        stego_tensor = torch.from_numpy(np.array(img)).permute(2, 0, 1).unsqueeze(0)
+
+        with torch.no_grad():
+            all_bits = self.decoder(stego_tensor)
+
+        header_bits = all_bits[:32]
+        header_bytes = self._bits_to_bytes(header_bits)
         data_len = struct.unpack("I", header_bytes)[0]
         
-        # 3. Read Data
         start = 32
         end = 32 + (data_len * 8)
-        
-        # Safety check
-        if end > len(bits_str):
-            raise ValueError("Corrupted data or wrong key")
-            
-        data_bits = bits_str[start:end]
-        return bytes(Steganography._binary_to_bytes(data_bits))
+        if end > len(all_bits):
+            raise ValueError("Invalid Header or Corrupted Data")
+
+        return bytes(self._bits_to_bytes(all_bits[start:end]))
+
+# Initialize Engine
+stego_engine = Steganography()
 
 # ==========================================
 # 🚀 API ENDPOINTS
@@ -132,13 +161,10 @@ def image_to_base64(img_buffer):
 async def encode_text(cover: UploadFile = File(...), message: str = Form(...), key: str = Form(...)):
     try:
         cover_bytes = await cover.read()
-        
-        # 1. Encrypt Message
         cipher = Security(key)
         encrypted_msg = cipher.encrypt(message.encode())
         
-        # 2. Hide Encrypted Data in Image
-        result_buf = Steganography.embed(cover_bytes, encrypted_msg)
+        result_buf = stego_engine.embed(cover_bytes, encrypted_msg)
         
         return {
             "stego_image": image_to_base64(result_buf),
@@ -151,11 +177,8 @@ async def encode_text(cover: UploadFile = File(...), message: str = Form(...), k
 async def decode_text(cover: UploadFile = File(...), key: str = Form(...)):
     try:
         stego_bytes = await cover.read()
+        encrypted_data = stego_engine.extract(stego_bytes)
         
-        # 1. Extract Raw Data from Image
-        encrypted_data = Steganography.extract(stego_bytes)
-        
-        # 2. Decrypt Data
         cipher = Security(key)
         decrypted_msg = cipher.decrypt(encrypted_data)
         
@@ -164,7 +187,7 @@ async def decode_text(cover: UploadFile = File(...), key: str = Form(...)):
             
         return {
             "message": decrypted_msg.decode(),
-            "recovered_image": image_to_base64(io.BytesIO(stego_bytes)) # Just echo back for UI
+            "recovered_image": image_to_base64(io.BytesIO(stego_bytes))
         }
     except Exception as e:
         return JSONResponse(status_code=400, content={"error": "Extraction Failed. Is this a Stego image?"})
@@ -175,12 +198,10 @@ async def encode_image(cover: UploadFile = File(...), secret: UploadFile = File(
         cover_bytes = await cover.read()
         secret_bytes = await secret.read()
         
-        # 1. Encrypt Secret Image
         cipher = Security(key)
         encrypted_secret = cipher.encrypt(secret_bytes)
         
-        # 2. Hide in Cover
-        result_buf = Steganography.embed(cover_bytes, encrypted_secret)
+        result_buf = stego_engine.embed(cover_bytes, encrypted_secret)
         
         return {
             "stego_image": image_to_base64(result_buf),
@@ -193,18 +214,14 @@ async def encode_image(cover: UploadFile = File(...), secret: UploadFile = File(
 async def decode_image(cover: UploadFile = File(...), key: str = Form(...)):
     try:
         stego_bytes = await cover.read()
+        encrypted_data = stego_engine.extract(stego_bytes)
         
-        # 1. Extract Raw Data
-        encrypted_data = Steganography.extract(stego_bytes)
-        
-        # 2. Decrypt
         cipher = Security(key)
         decrypted_data = cipher.decrypt(encrypted_data)
         
         if decrypted_data is None:
             return JSONResponse(status_code=400, content={"error": "Wrong Key!"})
             
-        # Convert bytes back to valid image buffer for frontend display
         secret_buf = io.BytesIO(decrypted_data)
         
         return {

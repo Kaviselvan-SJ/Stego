@@ -102,12 +102,16 @@ export default function App() {
             >
               <FileText size={18} /> Text Hiding
             </button>
+            
+            {/*
             <button 
               onClick={() => {setMode('image'); setResult(null);}}
               className={`flex-1 py-3 rounded-lg flex items-center justify-center gap-2 text-sm font-semibold transition-all duration-200 ${mode === 'image' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
             >
               <ImageIcon size={18} /> Image Hiding
             </button>
+
+            */}
           </div>
 
           {/* Encoder/Decoder Toggle */}
@@ -252,7 +256,7 @@ export default function App() {
                     />
                 </div>
               </div>
-
+              {/* Metrics Display 
               {result.metrics && (
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <MetricCard label="PSNR" value={result.metrics.psnr} unit="dB" desc="Signal/Noise" color="text-blue-600" />
@@ -261,6 +265,7 @@ export default function App() {
                     <MetricCard label="Accuracy" value={result.metrics.accuracy} unit="%" desc="Recovery Rate" color="text-emerald-600" />
                 </div>
               )}
+              */}
 
               {/* Decoded Text Display */}
               {view === 'decode' && mode === 'text' && result.message && (
