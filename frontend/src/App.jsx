@@ -6,7 +6,9 @@ import {
   CheckCircle, AlertCircle, Download
 } from 'lucide-react';
 
-const API_BASE_URL = "http://localhost:8000";
+// If using Vite:
+const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+
 
 export default function App() {
   const [mode, setMode] = useState('text'); // 'text' or 'image'
