@@ -1,90 +1,82 @@
-import torch
+import cv2
+import numpy as np
+import random
 import hashlib
+import base64
 from Crypto.Cipher import AES
-from reedsolo import RSCodec
+from Crypto.Util.Padding import pad, unpad
 
-class SecurityLayer:
-    def __init__(self, key=None, repetition_factor=7):
-        # Hash key to ensure 32 bytes for AES-256
-        self.key = hashlib.sha256(key.encode()).digest() if isinstance(key, str) else key
-        self.rsc = RSCodec(10)
-        self.rep = repetition_factor
+# --- Internal Security Helpers ---
+def _crypt(t, k):
+    key = hashlib.sha256(k.encode()).digest()
+    c = AES.new(key, AES.MODE_CBC)
+    iv = c.iv
+    ct = c.encrypt(pad(t.encode(), AES.block_size))
+    return base64.b64encode(iv + ct).decode('utf-8')
 
-    def _repeat_bits(self, binary_str):
-        # Simply repeats every bit N times (e.g., 1 -> 1111111)
-        return "".join([b * self.rep for b in binary_str])
+def _decrypt(t, k):
+    try:
+        key = hashlib.sha256(k.encode()).digest()
+        raw = base64.b64decode(t)
+        iv, ct = raw[:16], raw[16:]
+        c = AES.new(key, AES.MODE_CBC, iv)
+        return unpad(c.decrypt(ct), AES.block_size).decode('utf-8')
+    except: return None
 
-    def _collapse_bits(self, binary_str):
-        # "Votes" to recover original bits (e.g., 1111011 -> 1)
-        recovered_bits = ""
-        for i in range(0, len(binary_str), self.rep):
-            chunk = binary_str[i:i+self.rep]
-            bit = '1' if chunk.count('1') > (self.rep // 2) else '0'
-            recovered_bits += bit
-        return recovered_bits
+# --- Existing Core Logic ---
+def get_bits(t):
+    b = "".join(f"{ord(c):08b}" for c in t)
+    return b + '1111111111111110'
 
-    def encrypt(self, message: str) -> str:
-        # 1. AES Encryption
-        cipher = AES.new(self.key, AES.MODE_EAX)
-        ciphertext, tag = cipher.encrypt_and_digest(message.encode('utf-8'))
-        combined = cipher.nonce + tag + ciphertext
+def get_text(b):
+    chars = [chr(int(b[i:i+8], 2)) for i in range(0, len(b), 8) if len(b[i:i+8]) == 8]
+    return "".join(chars)
+
+def process_data(img, text, key, s=40):
+    # Encrypt the text before converting to bits
+    encrypted_text = _crypt(text, key)
+    
+    ycc = cv2.cvtColor(img, cv2.COLOR_BGR2YCrCb)
+    y = np.float32(ycc[:, :, 0])
+    h, w = y.shape
+    h, w = h - (h % 8), w - (w % 8)
+    y = y[:h, :w]
+    
+    bits = get_bits(encrypted_text)
+    blocks = [(r, c) for r in range(0, h, 8) for c in range(0, w, 8)]
+    random.seed(key)
+    random.shuffle(blocks)
+    
+    u1, v1, u2, v2 = 4, 3, 3, 4
+    for i in range(min(len(bits), len(blocks))):
+        r, c = blocks[i]
+        d_block = cv2.dct(y[r:r+8, c:c+8])
+        avg = (d_block[u1, v1] + d_block[u2, v2]) / 2.0
+        if bits[i] == '1':
+            d_block[u1, v1], d_block[u2, v2] = avg + (s/2) + 1, avg - (s/2) - 1
+        else:
+            d_block[u2, v2], d_block[u1, v1] = avg + (s/2) + 1, avg - (s/2) - 1
+        y[r:r+8, c:c+8] = cv2.idct(d_block)
         
-        # 2. Reed-Solomon Encoding
-        protected_data = self.rsc.encode(combined)
-        
-        # 3. Convert to Binary String
-        binary_data = "".join(f"{b:08b}" for b in protected_data)
-        
-        # 4. Add Length Header (32 bits) 
-        # This tells the decoder exactly where the message ends.
-        length_header = f"{len(binary_data):032b}"
-        full_payload = length_header + binary_data
-        
-        # 5. Apply Repetition Code
-        return self._repeat_bits(full_payload)
+    ycc[:h, :w, 0] = np.clip(y, 0, 255)
+    return cv2.cvtColor(ycc, cv2.COLOR_YCrCb2BGR)
 
-    def decrypt(self, binary_str: str) -> str:
-        try:
-            # 1. Collapse Repetitions (Voting)
-            clean_bits = self._collapse_bits(binary_str)
-            
-            # 2. Read Length Header
-            if len(clean_bits) < 32: return None
-            length_header = clean_bits[:32]
-            payload_len = int(length_header, 2)
-            
-            # 3. Slice Exact Payload (Ignore trailing garbage)
-            if len(clean_bits) < 32 + payload_len: return None
-            actual_payload = clean_bits[32 : 32 + payload_len]
-
-            # 4. Convert Binary to Bytes
-            byte_arr = bytearray()
-            for i in range(0, len(actual_payload), 8):
-                byte_arr.append(int(actual_payload[i:i+8], 2))
-            
-            # 5. Reed-Solomon Decode
-            decoded_data, _, _ = self.rsc.decode(bytes(byte_arr))
-            
-            # 6. AES Decrypt
-            nonce = decoded_data[:16]
-            tag = decoded_data[16:32]
-            ciphertext = decoded_data[32:]
-            
-            cipher = AES.new(self.key, AES.MODE_EAX, nonce)
-            return cipher.decrypt_and_verify(ciphertext, tag).decode('utf-8')
-            
-        except Exception as e:
-            print(f"Decryption Error: {e}")
-            return None
-
-def get_secure_indices(total_pixels, password_str):
-    hash_object = hashlib.sha256(password_str.encode('utf-8'))
-    seed_int = int(hash_object.hexdigest(), 16) % (2**32)
-    g = torch.Generator()
-    g.manual_seed(seed_int)
-    return torch.randperm(total_pixels, generator=g)
-
-def calculate_psnr(img1, img2):
-    mse = torch.mean((img1 - img2) ** 2)
-    if mse == 0: return 100
-    return 20 * torch.log10(1.0 / torch.sqrt(mse))
+def extract_data(img, key):
+    ycc = cv2.cvtColor(img, cv2.COLOR_BGR2YCrCb)
+    y = np.float32(ycc[:, :, 0])
+    h, w = y.shape
+    h, w = h - (h % 8), w - (w % 8)
+    blocks = [(r, c) for r in range(0, h, 8) for c in range(0, w, 8)]
+    random.seed(key)
+    random.shuffle(blocks)
+    
+    u1, v1, u2, v2 = 4, 3, 3, 4
+    bits = ""
+    for r, c in blocks:
+        d_block = cv2.dct(y[r:r+8, c:c+8])
+        bits += '1' if d_block[u1, v1] > d_block[u2, v2] else '0'
+        if bits.endswith('1111111111111110'):
+            encrypted_payload = get_text(bits[:-16])
+            # Decrypt the extracted payload
+            return _decrypt(encrypted_payload, key) or "Decryption Failed"
+    return "No message found"
